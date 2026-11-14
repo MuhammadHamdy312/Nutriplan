@@ -917,9 +917,8 @@ function renderFoodLogPage() {
   }
 }
 
-// ==========================================
 // 7. EVENT LISTENERS
-// ==========================================
+
 function initEvents() {
   // Mobile sidebar toggle
   const sidebar = document.querySelector('#sidebar');
@@ -999,7 +998,7 @@ function initEvents() {
     searchProducts(prodInput?.value);
   };
 
-  prodInput?.addEventListener('input', () => {
+  prodInput?.addEventListener('submit', () => {
     clearTimeout(prodTimer);
     prodTimer = setTimeout(triggerProdSearch, 400);
   });
