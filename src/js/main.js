@@ -24,10 +24,9 @@ import {
 // API Endpoints
 const API_BASE = 'https://nutriplan-api.vercel.app/api';
 const API_KEY = 'xRGnhxcXrKuX8hJpeeQE5Rac9b7dyQDpaMs5fWFL';
+const STORAGE_KEY = 'nutriplan_food_log';
+const TARGETS = { calories: 2000, protein: 50, carbs: 250, fat: 65 };
 
-/* mmmmmmmmmmmmmmmmmmm
-   APP STATE
-   mmmmmmmmmmmmmmmmmmm */
 const state = {
   allMeals: [],
   currentRecipes: [],
@@ -37,39 +36,36 @@ const state = {
   currentNutrition: null,
   isGridView: true,
 
-  // Product Scanner State
-  hasSearched: false,       
+  // Product scanner state
+  hasSearched: false,
   lastQuery: '',
-  searchedProducts: [],    
-  currentProducts: [],      
+  searchedProducts: [],
+  currentProducts: [],
   activeCategory: null,
   activeNutriGrade: ''
 };
 
-/* ------------------
-   BASIC FETCH HELPER
-   --------------- */
+// 2. HELPER FUNCTIONS (API, Date, Alerts)
+
 async function fetchJSON(url, options) {
-  console.log(`[API] →`, url.replace('https://nutriplan-api.vercel.app/api', '/api'));
   try {
     const res = await fetch(url, options);
-    if (!res.ok) {
-      console.warn(`[API] ✗ ${res.status} ${res.statusText}`, url);
-      return null;
-    }
-    const data = await res.json();
-    console.log(`[API] ✓`, url.replace('https://nutriplan-api.vercel.app/api', '/api'), data);
-    return data;
+    if (!res.ok) return null;
+    return await res.json();
   } catch (err) {
-    console.error(`[API] ✗ Error`, url, err.message);
+    console.error('Fetch error:', err.message);
     return null;
   }
 }
 
-/* 
-   DATE & TOAST HELPERS
-    */
-function formatToday() {
+function getTodayDateStr(date = new Date()) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function formatTodayDate() {
   return new Intl.DateTimeFormat('en-US', {
     weekday: 'long',
     month: 'short',
@@ -77,50 +73,9 @@ function formatToday() {
   }).format(new Date());
 }
 
-function getTodayDateStr(d = new Date()) {
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-function isTodayDate(dateVal) {
-  if (!dateVal) return false;
-  const localToday = getTodayDateStr();
-  const isoToday = new Date().toISOString().split('T')[0];
-  const clean = String(dateVal).split('T')[0].trim();
-  return clean === localToday || clean === isoToday;
-}
-
-function getWeekDays() {
-  const now = new Date();
-  const list = [];
-
-  // Rolling series of 7 consecutive days ending with Today
-  for (let o = 6; o >= 0; o--) {
-    const d = new Date(now);
-    d.setDate(now.getDate() - o);
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    const localDateStr = `${year}-${month}-${day}`;
-    const isoDateStr = d.toISOString().split('T')[0];
-    list.push({
-      name: d.toLocaleDateString('en-US', { weekday: 'short' }),
-      dayName: d.toLocaleDateString('en-US', { weekday: 'short' }),
-      num: d.getDate(),
-      date: d.getDate(),
-      dateStr: localDateStr,
-      isoDateStr: isoDateStr,
-      isToday: o === 0
-    });
-  }
-  return list;
-}
-
 function showNotification(msg, type = 'info') {
-  const old = document.querySelector('.toast-notification');
-  if (old) old.remove();
+  const oldToast = document.querySelector('.toast-notification');
+  if (oldToast) oldToast.remove();
 
   const colors = {
     success: 'bg-emerald-500',
@@ -136,125 +91,58 @@ function showNotification(msg, type = 'info') {
   setTimeout(() => toast.remove(), 3000);
 }
 
-const showToast = showNotification;
-
-function showSuccessAlert(title, text, cal) {
+function showSuccessAlert(title, text, calories) {
   if (typeof Swal !== 'undefined') {
     Swal.fire({
       title,
-      html: `<p class="text-gray-600 text-sm">${text}</p>${cal ? `<p class="text-emerald-600 font-bold text-lg mt-2">+${cal} calories</p>` : ''}`,
+      html: `<p class="text-gray-600 text-sm">${text}</p>${calories ? `<p class="text-emerald-600 font-bold text-lg mt-2">+${calories} calories</p>` : ''}`,
       icon: 'success',
       confirmButtonColor: '#10b981',
       timer: 2000,
       showConfirmButton: false,
-      customClass: {
-        popup: 'rounded-3xl shadow-2xl', title: 'text-2xl font-bold text-gray-900'
-      }
+      customClass: { popup: 'rounded-3xl shadow-2xl', title: 'text-2xl font-bold text-gray-900' }
     });
   } else {
-    const existing = document.querySelector('#success-modal-fallback');
-    if (existing) existing.remove();
-
-    const overlay = document.createElement('div');
-    overlay.id = 'success-modal-fallback';
-    overlay.className = 'fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center z-[9999] p-4 animate-fade-in';
-    overlay.innerHTML = `
-      <div class="bg-white rounded-3xl p-8 max-w-sm w-full text-center shadow-2xl">
-        <div class="w-20 h-20 mx-auto mb-4 rounded-full border-4 border-emerald-500/30 flex items-center justify-center">
-          <i class="fa-solid fa-check text-emerald-500 text-3xl"></i>
-        </div>
-        <h3 class="text-2xl font-bold text-gray-900 mb-2">${title}</h3>
-        <p class="text-gray-600 text-sm mb-2">${text}</p>
-        ${cal ? `<p class="text-emerald-600 font-bold text-lg">+${cal} calories</p>` : ''}
-      </div>
-    `;
-    document.body.appendChild(overlay);
-    setTimeout(() => overlay.remove(), 2000);
+    showNotification(`${title}: ${text}`, 'success');
   }
 }
 
-/* 
-   FOOD LOG (LocalStorage CRUD)
-   */
-const STORAGE_KEY = 'nutriplan_food_log';
-const TARGETS = { calories: 2000, protein: 50, carbs: 250, fat: 65 };
-
-function getLogs() {
-  return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+function hideLoadingOverlay() {
+  const overlay = document.querySelector('#app-loading-overlay');
+  if (!overlay) return;
+  overlay.style.transition = 'opacity 0.5s ease-out';
+  overlay.style.opacity = '0';
+  setTimeout(() => overlay.remove(), 500);
 }
 
-function addLog(item) {
-  const logs = getLogs();
-  const entry = {
-    id: Date.now().toString(),
-    name: item.name || 'Food Item',
-    calories: Math.round(Number(item.calories) || 0),
-    protein: Math.round(Number(item.protein) || 0),
-    carbs: Math.round(Number(item.carbs) || 0),
-    fat: Math.round(Number(item.fat) || 0),
-    servings: Number(item.servings) || 1,
-    image: item.image || '',
-    type: item.type || 'meal',
-    time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    date: getTodayDateStr()
-  };
-  logs.unshift(entry);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(logs));
-  return entry;
-}
+// 3. NAVIGATION & ROUTING
 
-function removeLog(id) {
-  const logs = getLogs().filter(i => i.id !== id);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(logs));
-}
-
-function clearTodayLogs() {
-  const all = getLogs();
-  // تصفية العناصر بحيث تقتصر حصراً على عناصر اليوم، مع الاحتفاظ بجميع عناصر الأيام السابقة في السجل من أجل "نظرة عامة أسبوعية
-  const remaining = all.filter(i => !isTodayDate(i.date));
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(remaining));
-  showNotification("Today's log cleared", "info");
-}
-
-const clearLogs = clearTodayLogs;
-
-function getTodayTotals() {
-  const logs = getLogs().filter(i => isTodayDate(i.date));
-  return logs.reduce((acc, i) => {
-    acc.calories += i.calories;
-    acc.protein += i.protein;
-    acc.carbs += i.carbs;
-    acc.fat += i.fat;
-    return acc;
-  }, { calories: 0, protein: 0, carbs: 0, fat: 0 });
-}
-
-/* 
-   ROUTING & PAGE VIEW
-   */
 function showPage(page) {
   const mealsSections = [
     document.querySelector('#search-filters-section'),
     document.querySelector('#meal-categories-section'),
     document.querySelector('#all-recipes-section')
   ];
-  const detailsSec = document.querySelector('#meal-details');
-  const prodSec = document.querySelector('#products-section');
-  const foodSec = document.querySelector('#foodlog-section');
+  const mealDetailsSec = document.querySelector('#meal-details');
+  const productsSec = document.querySelector('#products-section');
+  const foodLogSec = document.querySelector('#foodlog-section');
 
-  mealsSections.forEach(s => s && (s.style.display = 'none'));
-  if (detailsSec) detailsSec.style.display = 'none';
-  if (prodSec) prodSec.style.display = 'none';
-  if (foodSec) foodSec.style.display = 'none';
+  // Hide all sections first
+  mealsSections.forEach(sec => { if (sec) sec.style.display = 'none'; });
+  if (mealDetailsSec) mealDetailsSec.style.display = 'none';
+  if (productsSec) productsSec.style.display = 'none';
+  if (foodLogSec) foodLogSec.style.display = 'none';
 
-  const pages = ['meals', 'products', 'foodlog'];
+  // Update active sidebar link
+  const pageNames = ['meals', 'products', 'foodlog'];
   document.querySelectorAll('.nav-link').forEach((link, idx) => {
-    const active = (pages[idx] === page) || (page === 'meal-detail' && idx === 0);
-    link.className = active
+    const isActive = (pageNames[idx] === page) || (page === 'meal-detail' && idx === 0);
+    link.className = isActive
       ? 'nav-link flex items-center gap-3 px-4 py-3 rounded-xl bg-emerald-50 text-emerald-700 font-semibold transition-all'
       : 'nav-link flex items-center gap-3 px-4 py-3 text-gray-600 hover:bg-gray-50 rounded-xl transition-all';
   });
 
+  // Update header text
   const headers = {
     meals: ['Meals & Recipes', 'Discover delicious and nutritious recipes tailored for you'],
     'meal-detail': ['Recipe Details', 'View full recipe information and nutrition facts'],
@@ -262,22 +150,23 @@ function showPage(page) {
     foodlog: ['Food Log', 'Track your daily nutrition and food intake']
   };
 
-  const h1 = document.querySelector('header h1');
-  const p = document.querySelector('header p');
-  if (headers[page] && h1 && p) {
-    h1.textContent = headers[page][0];
-    p.textContent = headers[page][1];
+  const titleEl = document.querySelector('header h1');
+  const descEl = document.querySelector('header p');
+  if (headers[page] && titleEl && descEl) {
+    titleEl.textContent = headers[page][0];
+    descEl.textContent = headers[page][1];
   }
 
-  if (page === 'meals') mealsSections.forEach(s => s && (s.style.display = ''));
-  else if (page === 'meal-detail' && detailsSec) detailsSec.style.display = '';
-  else if (page === 'products') {
-    if (prodSec) prodSec.style.display = '';
-    // Do not display any products until user searches 
+  // Display the selected page
+  if (page === 'meals') {
+    mealsSections.forEach(sec => { if (sec) sec.style.display = ''; });
+  } else if (page === 'meal-detail') {
+    if (mealDetailsSec) mealDetailsSec.style.display = '';
+  } else if (page === 'products') {
+    if (productsSec) productsSec.style.display = '';
     if (!state.hasSearched) resetProductScanner();
-  }
-  else if (page === 'foodlog') {
-    if (foodSec) foodSec.style.display = '';
+  } else if (page === 'foodlog') {
+    if (foodLogSec) foodLogSec.style.display = '';
     renderFoodLogPage();
   }
 
@@ -286,18 +175,23 @@ function showPage(page) {
 
 function handleRoute() {
   const hash = window.location.hash.slice(1);
-  if (hash === 'products') showPage('products');
-  else if (hash === 'foodlog') showPage('foodlog'); else if (hash.startsWith('meal/')) openMealDetail(hash.split('/')[1]);
-  else showPage('meals');
+  if (hash === 'products') {
+    showPage('products');
+  } else if (hash === 'foodlog') {
+    showPage('foodlog');
+  } else if (hash.startsWith('meal/')) {
+    openMealDetail(hash.split('/')[1]);
+  } else {
+    showPage('meals');
+  }
 }
 
 function navigate(route) {
   window.location.hash = route;
 }
 
-/* 
-   MEALS & RECIPES (Regex Search)
-   */
+// 4. MEALS & RECIPES
+
 function renderAreaChips(areas, activeArea = 'All') {
   const container = document.querySelector('#search-filters-section .flex');
   if (!container) return;
@@ -312,6 +206,7 @@ function renderAreaChips(areas, activeArea = 'All') {
     btn.addEventListener('click', async () => {
       const area = btn.dataset.area;
       renderAreaChips(state.areas, area);
+
       const grid = document.querySelector('#recipes-grid');
       if (grid) grid.innerHTML = getLoadingSpinner();
 
@@ -330,8 +225,8 @@ function renderCategories(categories) {
   const grid = document.querySelector('#categories-grid');
   if (!grid) return;
 
-  const allowed = Object.keys(CATEGORY_CONFIG);
-  const list = categories.filter(c => allowed.includes(c.name || c.strCategory)).slice(0, 12);
+  const allowedNames = Object.keys(CATEGORY_CONFIG);
+  const list = categories.filter(c => allowedNames.includes(c.name || c.strCategory)).slice(0, 12);
   grid.innerHTML = list.map(createCategoryCard).join('');
 
   grid.querySelectorAll('.category-card').forEach(card => {
@@ -339,6 +234,7 @@ function renderCategories(categories) {
       const cat = card.dataset.category;
       const rGrid = document.querySelector('#recipes-grid');
       if (rGrid) rGrid.innerHTML = getLoadingSpinner();
+
       const data = await fetchJSON(`${API_BASE}/meals/filter?category=${encodeURIComponent(cat)}&page=1&limit=25`);
       state.currentRecipes = data?.results || [];
       renderRecipes(state.currentRecipes);
@@ -366,24 +262,9 @@ function renderRecipes(recipes) {
   grid.innerHTML = recipes.map(m => createRecipeCard(m, state.isGridView)).join('');
 }
 
-// Regex search for meals
-function searchMealsWithRegex(query, list) {
-  if (!query || !query.trim()) return list;
-  // Construct case-insensitive regular expression with escaped special characters
-  const pattern = query.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const regex = new RegExp(pattern, 'i');
-
-  return list.filter(m => {
-    const name = m.name || m.strMeal || '';
-    const cat = m.category || m.strCategory || '';
-    const area = m.area || m.strArea || '';
-    const inst = Array.isArray(m.instructions) ? m.instructions.join(' ') : (m.instructions || m.strInstructions || '');
-    return regex.test(name) || regex.test(cat) || regex.test(area) || regex.test(inst);
-  });
-}
-
 async function handleMealSearch(query) {
-  if (!query) {
+  const clean = query.trim();
+  if (!clean) {
     state.currentRecipes = state.allMeals;
     renderRecipes(state.currentRecipes);
     return;
@@ -392,24 +273,36 @@ async function handleMealSearch(query) {
   const grid = document.querySelector('#recipes-grid');
   if (grid) grid.innerHTML = getLoadingSpinner();
 
-  const data = await fetchJSON(`${API_BASE}/meals/search?q=${encodeURIComponent(query)}&page=1&limit=25`);
+  const data = await fetchJSON(`${API_BASE}/meals/search?q=${encodeURIComponent(clean)}&page=1&limit=25`);
   const pool = (data?.results && data.results.length > 0) ? data.results : state.allMeals;
-  state.currentRecipes = searchMealsWithRegex(query, pool);
+
+  // Simple search matching name, category, or area
+  const term = clean.toLowerCase();
+  state.currentRecipes = pool.filter(m => {
+    const name = (m.name || m.strMeal || '').toLowerCase();
+    const cat = (m.category || m.strCategory || '').toLowerCase();
+    const area = (m.area || m.strArea || '').toLowerCase();
+    return name.includes(term) || cat.includes(term) || area.includes(term);
+  });
+
   renderRecipes(state.currentRecipes);
 }
 
 async function openMealDetail(id) {
   showPage('meal-detail');
+
   const data = await fetchJSON(`${API_BASE}/meals/${id}`);
   const meal = data?.result;
   if (!meal) return;
   state.currentMeal = meal;
 
+  // Set image, title, and badges
   const imgEl = document.querySelector('#meal-detail-img');
   if (imgEl) {
     imgEl.src = meal.thumbnail || meal.strMealThumb;
     imgEl.alt = meal.name || meal.strMeal;
   }
+
   const titleEl = document.querySelector('#meal-detail-title');
   if (titleEl) titleEl.textContent = meal.name || meal.strMeal;
 
@@ -421,22 +314,26 @@ async function openMealDetail(id) {
     `;
   }
 
-  const heroCalories = document.querySelector('#hero-calories');
+  // Set hero text & loading state
   const heroServings = document.querySelector('#hero-servings');
+  const heroCalories = document.querySelector('#hero-calories');
   const logBtn = document.querySelector('#log-meal-btn');
   const nutLoading = document.querySelector('#nutrition-loading');
   const nutContent = document.querySelector('#nutrition-facts-content');
 
   if (heroServings) heroServings.textContent = `${meal.servings || 4} servings`;
   if (heroCalories) heroCalories.innerHTML = '<i class="fa-solid fa-fire mr-1"></i><span>Calculating...</span>';
+
   if (logBtn) {
     logBtn.disabled = true;
     logBtn.className = 'flex items-center gap-2 px-6 py-3 bg-gray-200 text-gray-500 rounded-xl font-semibold transition-all cursor-not-allowed';
     logBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i><span>Calculating...</span>';
   }
+
   if (nutLoading) nutLoading.classList.remove('hidden');
   if (nutContent) nutContent.classList.add('hidden');
 
+  // Ingredients and instructions list
   const ingredients = meal.ingredients || [];
   const ingCount = document.querySelector('#meal-detail-ing-count');
   if (ingCount) ingCount.textContent = `${ingredients.length} items`;
@@ -447,6 +344,7 @@ async function openMealDetail(id) {
   const stepsContainer = document.querySelector('#meal-instructions-list');
   if (stepsContainer) stepsContainer.innerHTML = createInstructionsList(meal.instructions);
 
+  // Video embed
   const videoCard = document.querySelector('#meal-video-card');
   const iframe = document.querySelector('#meal-detail-video');
   if (iframe) {
@@ -455,12 +353,12 @@ async function openMealDetail(id) {
       iframe.src = `https://www.youtube.com/embed/${match[1]}`;
       if (videoCard) videoCard.style.display = 'block';
     } else {
-      iframe.style.display = 'none';
-    
+      iframe.src = 'about:blank';
+      if (videoCard) videoCard.style.display = 'none';
     }
   }
 
-  // Fetch Nutrition
+  // Fetch Nutrition Analysis
   const ingStrings = ingredients.map(i => `${i.measure || ''} ${i.ingredient}`.trim());
   const nutData = await fetchJSON(`${API_BASE}/nutrition/analyze`, {
     method: 'POST',
@@ -475,53 +373,63 @@ async function openMealDetail(id) {
   const totals = state.currentNutrition?.totals || { calories: perServing.calories * 4 };
 
   if (heroCalories) heroCalories.textContent = `${perServing.calories} cal/serving`;
+
   if (logBtn) {
     logBtn.disabled = false;
     logBtn.className = 'flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-all cursor-pointer';
     logBtn.innerHTML = '<i class="fa-solid fa-clipboard-list"></i><span>Log This Meal</span>';
   }
 
-  // Populate static Nutrition Facts without regenerating HTML
+  // Populate nutrition facts values into static HTML
   if (nutLoading) nutLoading.classList.add('hidden');
   if (nutContent) {
     nutContent.classList.remove('hidden');
-    const setTxt = (sel, val) => { const el = document.querySelector(sel); if (el) el.textContent = val; };
-    const setWidth = (sel, pct) => { const el = document.querySelector(sel); if (el) el.style.width = `${pct}%`; };
 
-    setTxt('#nut-cal-val', perServing.calories || 0);
-    setTxt('#nut-total-cal-val', totals.calories || (perServing.calories || 0) * 4);
+    const setText = (selector, val) => {
+      const el = document.querySelector(selector);
+      if (el) el.textContent = val;
+    };
+    const setBar = (selector, val, target) => {
+      const el = document.querySelector(selector);
+      if (el) el.style.width = `${Math.min(100, Math.round((val / target) * 100))}%`;
+    };
 
-    setTxt('#nut-protein-val', `${perServing.protein || 0}g`);
-    setWidth('#nut-protein-bar', Math.min(100, Math.round(((perServing.protein || 0) / 50) * 100)));
+    setText('#nut-cal-val', perServing.calories || 0);
+    setText('#nut-total-cal-val', totals.calories || (perServing.calories || 0) * 4);
 
-    setTxt('#nut-carbs-val', `${perServing.carbs || 0}g`);
-    setWidth('#nut-carbs-bar', Math.min(100, Math.round(((perServing.carbs || 0) / 250) * 100)));
+    setText('#nut-protein-val', `${perServing.protein || 0}g`);
+    setBar('#nut-protein-bar', perServing.protein || 0, 50);
 
-    setTxt('#nut-fat-val', `${perServing.fat || 0}g`);
-    setWidth('#nut-fat-bar', Math.min(100, Math.round(((perServing.fat || 0) / 65) * 100)));
+    setText('#nut-carbs-val', `${perServing.carbs || 0}g`);
+    setBar('#nut-carbs-bar', perServing.carbs || 0, 250);
 
-    setTxt('#nut-fiber-val', `${perServing.fiber || 0}g`);
-    setWidth('#nut-fiber-bar', Math.min(100, Math.round(((perServing.fiber || 0) / 28) * 100)));
+    setText('#nut-fat-val', `${perServing.fat || 0}g`);
+    setBar('#nut-fat-bar', perServing.fat || 0, 65);
 
-    setTxt('#nut-sugar-val', `${perServing.sugar || 0}g`);
-    setWidth('#nut-sugar-bar', Math.min(100, Math.round(((perServing.sugar || 0) / 50) * 100)));
+    setText('#nut-fiber-val', `${perServing.fiber || 0}g`);
+    setBar('#nut-fiber-bar', perServing.fiber || 0, 28);
 
-    setTxt('#nut-satfat-val', `${perServing.saturatedFat || 0}g`);
-    setWidth('#nut-satfat-bar', Math.min(100, Math.round(((perServing.saturatedFat || 0) / 20) * 100)));
+    setText('#nut-sugar-val', `${perServing.sugar || 0}g`);
+    setBar('#nut-sugar-bar', perServing.sugar || 0, 50);
 
-    setTxt('#nut-cholesterol-val', `${perServing.cholesterol || 0}mg`);
-    setTxt('#nut-sodium-val', `${perServing.sodium || 0}mg`);
+    setText('#nut-satfat-val', `${perServing.saturatedFat || 0}g`);
+    setBar('#nut-satfat-bar', perServing.saturatedFat || 0, 20);
+
+    setText('#nut-cholesterol-val', `${perServing.cholesterol || 0}mg`);
+    setText('#nut-sodium-val', `${perServing.sodium || 0}mg`);
   }
 }
 
 function showLogMealModal(meal) {
   let servings = 1;
   const perServing = state.currentNutrition?.perServing || { calories: 0, protein: 0, carbs: 0, fat: 0 };
+
   const modal = document.createElement('div');
   modal.className = 'fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4';
   modal.innerHTML = createLogMealModalHTML(meal, perServing, servings);
+  document.body.appendChild(modal);
 
-  const update = () => {
+  const updateModalValues = () => {
     modal.querySelector('#modal-calories').textContent = Math.round(perServing.calories * servings);
     modal.querySelector('#modal-protein').textContent = `${Math.round(perServing.protein * servings)}g`;
     modal.querySelector('#modal-carbs').textContent = `${Math.round(perServing.carbs * servings)}g`;
@@ -529,22 +437,28 @@ function showLogMealModal(meal) {
     modal.querySelector('#meal-servings').value = servings;
   };
 
-  document.body.appendChild(modal);
-
   modal.querySelector('#decrease-servings').onclick = () => {
-    if (servings > 0.5) { servings -= 0.5; update(); }
+    if (servings > 0.5) {
+      servings -= 0.5;
+      updateModalValues();
+    }
   };
+
   modal.querySelector('#increase-servings').onclick = () => {
-    if (servings < 10) { servings += 0.5; update(); }
+    if (servings < 10) {
+      servings += 0.5;
+      updateModalValues();
+    }
   };
-  modal.querySelector('#cancel-log-meal').onclick = () => { modal.remove(); };
-  modal.onclick = e => { if (e.target === modal) { modal.remove(); } };
+
+  modal.querySelector('#cancel-log-meal').onclick = () => modal.remove();
+  modal.onclick = e => { if (e.target === modal) modal.remove(); };
 
   modal.querySelector('#confirm-log-meal').onclick = () => {
-    const cal = Math.round(perServing.calories * servings);
+    const calories = Math.round(perServing.calories * servings);
     addLog({
       name: meal.name || meal.strMeal,
-      calories: cal,
+      calories,
       protein: Math.round(perServing.protein * servings),
       carbs: Math.round(perServing.carbs * servings),
       fat: Math.round(perServing.fat * servings),
@@ -553,13 +467,11 @@ function showLogMealModal(meal) {
       type: 'meal'
     });
     modal.remove();
-    showSuccessAlert('Meal Logged!', `${meal.name || meal.strMeal} (1 serving) has been added to your daily log.`, cal);
+    showSuccessAlert('Meal Logged!', `${meal.name || meal.strMeal} (${servings} serving) has been added to your daily log.`, calories);
   };
 }
 
-/* 
-   PRODUCT SCANNER (Regex Validation & Filtering)
-*/
+// 5. PRODUCT SCANNER
 function normalizeProduct(p) {
   if (!p) return null;
   const n = p.nutrients || p.nutrition || p.nutriments || {};
@@ -631,50 +543,51 @@ function renderProducts(products, countText) {
   if (grid) grid.innerHTML = products.map(createProductCard).join('');
 }
 
-// Regex Category matcher patterns
-const CATEGORY_REGEX = {
-  'breakfast-cereals': /cereal|breakfast|oat|granola|muesli|flake|porridge/i,
-  'beverages': /beverage|drink|soda|water|juice|cola|tea|coffee|milk|liquid/i,
-  'snacks': /snack|cookie|chip|crisp|bar|biscuit|popcorn|cracker|wafer|chocolate/i,
-  'dairies': /dairy|milk|cheese|yogurt|butter|cream|fromage/i,
-  'fruits': /fruit|apple|banana|berry|orange|grape|mango|citrus/i,
-  'vegetables': /vegetable|salad|carrot|tomato|spinach|potato|onion|greens/i,
-  'breads': /bread|toast|baguette|bun|bakery|flour|dough/i,
-  'meats': /meat|beef|chicken|pork|poultry|sausage|ham|bacon|fish|tuna/i,
-  'frozen-foods': /frozen|ice cream|pizza/i,
-  'sauces': /sauce|ketchup|mayo|dressing|condiment|mustard|oil|dip/i
+// Simple keywords for product categories
+const CATEGORY_KEYWORDS = {
+  'breakfast-cereals': ['cereal', 'breakfast', 'oat', 'granola', 'muesli', 'flake', 'porridge'],
+  'beverages': ['beverage', 'drink', 'soda', 'water', 'juice', 'cola', 'tea', 'coffee', 'milk'],
+  'snacks': ['snack', 'cookie', 'chip', 'crisp', 'bar', 'biscuit', 'popcorn', 'cracker', 'wafer', 'chocolate'],
+  'dairies': ['dairy', 'milk', 'cheese', 'yogurt', 'butter', 'cream', 'fromage'],
+  'fruits': ['fruit', 'apple', 'banana', 'berry', 'orange', 'grape', 'mango', 'citrus'],
+  'vegetables': ['vegetable', 'salad', 'carrot', 'tomato', 'spinach', 'potato', 'onion', 'greens'],
+  'breads': ['bread', 'toast', 'baguette', 'bun', 'bakery', 'flour', 'dough'],
+  'meats': ['meat', 'beef', 'chicken', 'pork', 'poultry', 'sausage', 'ham', 'bacon', 'fish', 'tuna'],
+  'frozen-foods': ['frozen', 'ice cream', 'pizza'],
+  'sauces': ['sauce', 'ketchup', 'mayo', 'dressing', 'condiment', 'mustard', 'oil', 'dip']
 };
 
-// Filter searched products using Regex
 function applyProductFilters() {
   if (!state.hasSearched) return;
 
   let list = [...state.searchedProducts];
 
-  // Nutri-Score regex filter
+  // 1. Nutri-Score filter
   if (state.activeNutriGrade) {
-    const gradeRegex = new RegExp(`^${state.activeNutriGrade}$`, 'i');
-    list = list.filter(p => gradeRegex.test(p.nutritionGrade || ''));
+    list = list.filter(p => (p.nutritionGrade || '').toLowerCase() === state.activeNutriGrade.toLowerCase());
   }
 
-  // Category regex filter
+  // 2. Category keyword filter
   if (state.activeCategory) {
-    const catRegex = CATEGORY_REGEX[state.activeCategory] || new RegExp(state.activeCategory.replace(/-/g, '.*'), 'i');
-    list = list.filter(p => catRegex.test(`${p.category} ${p.name} ${p.brand}`));
+    const keywords = CATEGORY_KEYWORDS[state.activeCategory] || [state.activeCategory.replace(/-/g, ' ')];
+    list = list.filter(p => {
+      const text = `${p.category} ${p.name} ${p.brand}`.toLowerCase();
+      return keywords.some(k => text.includes(k));
+    });
   }
 
   state.currentProducts = list;
-  const queryStr = state.lastQuery ? ` for "${state.lastQuery}"` : '';
-  const msg = list.length > 0
-    ? `Found ${list.length} products${queryStr}`
-    : `No products match your selected category`;
-  renderProducts(list, msg);
+  const queryText = state.lastQuery ? ` for "${state.lastQuery}"` : '';
+  const message = list.length > 0
+    ? `Found ${list.length} products${queryText}`
+    : 'No products match your selected category';
+
+  renderProducts(list, message);
 }
 
-// Handle Category click: only active AFTER search
 function handleProductCategoryClick(catKey) {
   if (!state.hasSearched) {
-    showToast('Please search for a product first, then select categories.', 'info');
+    showNotification('Please search for a product first, then select categories.', 'info');
     return;
   }
 
@@ -690,17 +603,15 @@ function handleProductCategoryClick(catKey) {
   applyProductFilters();
 }
 
-// Search products by name (Regex validation + API)
 async function searchProducts(query) {
-
-  if (!query || !/[a-zA-Z0-9]/.test(query.trim())) {
+  const clean = (query || '').trim();
+  if (!clean) {
     resetProductScanner();
     return;
   }
 
-  const cleanQuery = query.trim();
   state.hasSearched = true;
-  state.lastQuery = cleanQuery;
+  state.lastQuery = clean;
   state.activeCategory = null;
 
   const loading = document.querySelector('#products-loading');
@@ -711,11 +622,11 @@ async function searchProducts(query) {
   if (loading) loading.classList.remove('hidden');
   if (empty) empty.classList.add('hidden');
   if (grid) grid.innerHTML = '';
-  if (countEl) countEl.textContent = `Searching for "${cleanQuery}"...`;
+  if (countEl) countEl.textContent = `Searching for "${clean}"...`;
 
-  const data = await fetchJSON(`${API_BASE}/products/search?q=${encodeURIComponent(cleanQuery)}&page=1&limit=24`);
+  const data = await fetchJSON(`${API_BASE}/products/search?q=${encodeURIComponent(clean)}&page=1&limit=24`);
   const rawList = data?.results || data?.products || [];
-  const normalized = rawList.map(toP => normalizeProduct(toP));
+  const normalized = rawList.map(normalizeProduct).filter(Boolean);
 
   state.searchedProducts = normalized;
   state.currentProducts = normalized;
@@ -729,25 +640,22 @@ async function searchProducts(query) {
 
   const total = data?.pagination?.total || normalized.length;
   const msg = normalized.length > 0
-    ? `Found ${total} products for "${cleanQuery}"`
-    : `No products found for "${cleanQuery}"`;
+    ? `Found ${total} products for "${clean}"`
+    : `No products found for "${clean}"`;
 
   renderProducts(normalized, msg);
 }
 
-// Lookup by Barcode (Regex validation + API)
 async function lookupBarcode(code) {
-  // Regex: 4-16 digits only
-  const barcodeRegex = /^\d{4,16}$/;
-  const cleanCode = (code || '').trim();
-
-  if (!cleanCode || !barcodeRegex.test(cleanCode)) {
-    showToast('Please enter a valid numeric barcode number', 'error');
+  const clean = (code || '').trim();
+  // Valid barcode is numbers only
+  if (!clean || !/^\d+$/.test(clean)) {
+    showNotification('Please enter a valid numeric barcode number', 'error');
     return;
   }
 
   state.hasSearched = true;
-  state.lastQuery = cleanCode;
+  state.lastQuery = clean;
   state.activeCategory = null;
 
   const loading = document.querySelector('#products-loading');
@@ -758,26 +666,25 @@ async function lookupBarcode(code) {
   if (empty) empty.classList.add('hidden');
   if (grid) grid.innerHTML = '';
 
-  const data = await fetchJSON(`${API_BASE}/products/barcode/${cleanCode}`);
+  const data = await fetchJSON(`${API_BASE}/products/barcode/${clean}`);
   const raw = data?.result || data?.product;
   const p = normalizeProduct(raw);
 
   if (p) {
     state.searchedProducts = [p];
     state.currentProducts = [p];
-    renderProducts([p], `Found 1 product for barcode: ${cleanCode}`);
+    renderProducts([p], `Found 1 product for barcode: ${clean}`);
     showProductDetailModal(p);
   } else {
     state.searchedProducts = [];
     state.currentProducts = [];
-    renderProducts([], `No product found with barcode: ${cleanCode}`);
+    renderProducts([], `No product found with barcode: ${clean}`);
   }
 }
 
-// Product Detail Modal
 async function showProductDetailModal(product) {
-  const old = document.querySelector('#product-detail-modal');
-  if (old) old.remove();
+  const oldModal = document.querySelector('#product-detail-modal');
+  if (oldModal) oldModal.remove();
 
   // If ingredients/allergens are missing, fetch supplementary details from Open Food Facts API
   if ((!product.ingredients || !product.allergens) && product.barcode) {
@@ -798,7 +705,7 @@ async function showProductDetailModal(product) {
           product.quantity = offP.quantity;
         }
       }
-    } catch (e) {
+    } catch {
       // Gracefully continue with available data if offline/error
     }
   }
@@ -807,15 +714,14 @@ async function showProductDetailModal(product) {
   modal.id = 'product-detail-modal';
   modal.className = 'fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center z-50 p-4';
   modal.innerHTML = createProductDetailModalHTML(product);
-
   document.body.appendChild(modal);
 
   modal.querySelectorAll('.close-product-modal').forEach(btn => {
-    btn.onclick = () => { modal.remove(); };
+    btn.onclick = () => modal.remove();
   });
-  modal.onclick = e => { if (e.target === modal) { modal.remove(); } };
+  modal.onclick = e => { if (e.target === modal) modal.remove(); };
 
-  const addBtn = modal.querySelector('.add-product-to-log, #add-product-to-log');
+  const addBtn = modal.querySelector('.add-product-to-log');
   addBtn?.addEventListener('click', () => {
     const nut = product.nutrients || {};
     const cal = Math.round(nut.calories || 0);
@@ -834,15 +740,84 @@ async function showProductDetailModal(product) {
   });
 }
 
-/* mmmmmmmmmmmmm
-   FOOD LOG PAGE
- mmmmmmmmmmmmmmm*/
-function updateTodayNutritionDOM(totals, targets) {
+// 6. FOOD LOG (CRUD & WEEKLY OVERVIEW)
+function getLogs() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+  } catch {
+    return [];
+  }
+}
+
+function addLog(item) {
+  const logs = getLogs();
+  const entry = {
+    id: Date.now().toString(),
+    name: item.name || 'Food Item',
+    calories: Math.round(Number(item.calories) || 0),
+    protein: Math.round(Number(item.protein) || 0),
+    carbs: Math.round(Number(item.carbs) || 0),
+    fat: Math.round(Number(item.fat) || 0),
+    servings: Number(item.servings) || 1,
+    image: item.image || '',
+    type: item.type || 'meal',
+    time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    date: getTodayDateStr()
+  };
+  logs.unshift(entry);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(logs));
+  return entry;
+}
+
+function removeLog(id) {
+  const logs = getLogs().filter(i => i.id !== id);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(logs));
+}
+
+function clearTodayLogs() {
+  const allLogs = getLogs();
+  const today = getTodayDateStr();
+  // Clear items that match today, keep past days for weekly chart
+  const remaining = allLogs.filter(i => (i.date || '').split('T')[0] !== today);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(remaining));
+  showNotification("Today's log cleared", 'info');
+}
+
+function getTodayTotals() {
+  const today = getTodayDateStr();
+  const todayLogs = getLogs().filter(i => (i.date || '').split('T')[0] === today);
+  return todayLogs.reduce((acc, i) => {
+    acc.calories += i.calories;
+    acc.protein += i.protein;
+    acc.carbs += i.carbs;
+    acc.fat += i.fat;
+    return acc;
+  }, { calories: 0, protein: 0, carbs: 0, fat: 0 });
+}
+
+function getWeekDays() {
+  const now = new Date();
+  const days = [];
+  // Last 7 days ending with today
+  for (let offset = 6; offset >= 0; offset--) {
+    const d = new Date(now);
+    d.setDate(now.getDate() - offset);
+    days.push({
+      dayName: d.toLocaleDateString('en-US', { weekday: 'short' }),
+      date: d.getDate(),
+      dateStr: getTodayDateStr(d),
+      isToday: offset === 0
+    });
+  }
+  return days;
+}
+
+function updateTodayNutritionDOM(totals) {
   const macros = [
-    { key: 'cal', val: totals.calories, target: targets.calories, unit: 'kcal', color: 'emerald' },
-    { key: 'protein', val: totals.protein, target: targets.protein, unit: 'g', color: 'blue' },
-    { key: 'carbs', val: totals.carbs, target: targets.carbs, unit: 'g', color: 'amber' },
-    { key: 'fat', val: totals.fat, target: targets.fat, unit: 'g', color: 'purple' }
+    { key: 'cal', val: totals.calories, target: TARGETS.calories, unit: 'kcal', color: 'emerald' },
+    { key: 'protein', val: totals.protein, target: TARGETS.protein, unit: 'g', color: 'blue' },
+    { key: 'carbs', val: totals.carbs, target: TARGETS.carbs, unit: 'g', color: 'amber' },
+    { key: 'fat', val: totals.fat, target: TARGETS.fat, unit: 'g', color: 'purple' }
   ];
 
   macros.forEach(m => {
@@ -873,35 +848,35 @@ function updateTodayNutritionDOM(totals, targets) {
 
 function renderFoodLogPage() {
   const allLogs = getLogs();
-  //عرض العناصر على اليوم فقط: بمجرد انتهاء اليوم، تصبح قائمة العناصر المسجلة لهذا اليوم فارغة.
-  const todayLogs = allLogs.filter(i => isTodayDate(i.date));
+  const today = getTodayDateStr();
+  const todayLogs = allLogs.filter(i => (i.date || '').split('T')[0] === today);
   const totals = getTodayTotals();
 
-
+  // Set date title
   const dateEl = document.querySelector('#foodlog-date');
-  if (dateEl) dateEl.textContent = formatToday();
+  if (dateEl) dateEl.textContent = formatTodayDate();
 
-  // Progress Cards: update static DOM elements directly
-  updateTodayNutritionDOM(totals, TARGETS);
+  // Update progress bars
+  updateTodayNutritionDOM(totals);
 
-  // Today count & Clear button
-  const countH4 = document.querySelector('#foodlog-today-section h4');
-  if (countH4) countH4.textContent = `Logged Items (${todayLogs.length})`;
+  // Today item count & clear button
+  const countTitle = document.querySelector('#foodlog-today-section h4');
+  if (countTitle) countTitle.textContent = `Logged Items (${todayLogs.length})`;
 
   const clearBtn = document.querySelector('#clear-foodlog');
   if (clearBtn) clearBtn.style.display = todayLogs.length > 0 ? 'inline-flex' : 'none';
 
-  // Items List & Empty State: static empty state toggled
+  // Toggle empty state vs items list
   const emptyEl = document.querySelector('#foodlog-empty-state');
   const listEl = document.querySelector('#logged-items-list');
+
   if (todayLogs.length === 0) {
     if (emptyEl) emptyEl.style.display = 'block';
     if (listEl) {
       listEl.style.display = 'none';
       listEl.innerHTML = '';
     }
-  }
-  else {
+  } else {
     if (emptyEl) emptyEl.style.display = 'none';
     if (listEl) {
       listEl.style.display = 'block';
@@ -909,7 +884,7 @@ function renderFoodLogPage() {
     }
   }
 
-  // Weekly Overview (Rolling series of last 7 days ending with Today)
+  // Weekly Overview
   const chart = document.querySelector('#weekly-chart');
   if (chart) {
     const weekDays = getWeekDays();
@@ -918,22 +893,20 @@ function renderFoodLogPage() {
     let daysOnGoal = 0;
 
     const daysData = weekDays.map(day => {
-      const items = allLogs.filter(i => {
-        if (!i.date) return false;
-        const dStr = String(i.date).split('T')[0].trim();
-        return dStr === day.dateStr || dStr === day.isoDateStr;
-      });
+      const items = allLogs.filter(i => (i.date || '').split('T')[0] === day.dateStr);
       const cal = items.reduce((sum, i) => sum + i.calories, 0);
       const count = items.length;
+
       totalCal += cal;
       totalItems += count;
-      if (cal > 0 && cal >= TARGETS.calories * 0.8 && cal <= TARGETS.calories * 1.2) {
+      if (cal >= TARGETS.calories * 0.8 && cal <= TARGETS.calories * 1.2) {
         daysOnGoal++;
       }
       return { ...day, calories: cal, count };
     });
 
     chart.innerHTML = createWeeklyOverviewGrid(daysData);
+
     const avgEl = document.querySelector('#weekly-average-val');
     const itemsEl = document.querySelector('#weekly-total-items-val');
     const goalEl = document.querySelector('#weekly-days-goal-val');
@@ -944,39 +917,40 @@ function renderFoodLogPage() {
   }
 }
 
-/* mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
-   INITIALIZATION & EVENT BINDINGS
-   mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm */
+// ==========================================
+// 7. EVENT LISTENERS
+// ==========================================
 function initEvents() {
-  //  sidebar
+  // Mobile sidebar toggle
   const sidebar = document.querySelector('#sidebar');
   const overlay = document.querySelector('#sidebar-overlay');
-  const toggleSb = force => {
+  const toggleSidebar = (force) => {
     if (!sidebar || !overlay) return;
     const open = typeof force === 'boolean' ? force : !sidebar.classList.contains('open');
     sidebar.classList.toggle('open', open);
     overlay.classList.toggle('active', open);
   };
-  document.querySelector('#header-menu-btn')?.addEventListener('click', () => { toggleSb(); });
-  document.querySelector('#sidebar-close-btn')?.addEventListener('click', () => { toggleSb(false); });
-  overlay?.addEventListener('click', () => { toggleSb(false); });
+
+  document.querySelector('#header-menu-btn')?.addEventListener('click', () => toggleSidebar());
+  document.querySelector('#sidebar-close-btn')?.addEventListener('click', () => toggleSidebar(false));
+  overlay?.addEventListener('click', () => toggleSidebar(false));
 
   // Navigation Links
   const routes = ['meals', 'products', 'foodlog'];
   document.querySelectorAll('.nav-link').forEach((link, idx) => {
     link.addEventListener('click', e => {
       e.preventDefault();
-      toggleSb(false);
+      toggleSidebar(false);
       navigate(routes[idx]);
     });
   });
 
-  // Meals Search with Regex
+  // Meals Search
   const searchInput = document.querySelector('#search-input');
   let searchTimer = null;
   searchInput?.addEventListener('input', e => {
     clearTimeout(searchTimer);
-    searchTimer = setTimeout(() => handleMealSearch(e.target.value.trim()), 300);
+    searchTimer = setTimeout(() => handleMealSearch(e.target.value), 300);
   });
 
   // Grid/List View Toggle
@@ -997,7 +971,7 @@ function initEvents() {
     };
   }
 
-  // Click Recipe Card  Details
+  // Click Recipe Card -> Details
   document.querySelector('#recipes-grid')?.addEventListener('click', e => {
     const card = e.target.closest('.recipe-card');
     if (card?.dataset.mealId) {
@@ -1005,47 +979,39 @@ function initEvents() {
     }
   });
 
-  //    Back to meals button
-  document.querySelector('#back-to-meals-btn')?.addEventListener('click', () => { navigate('meals'); });
+  document.querySelector('#back-to-meals-btn')?.addEventListener('click', () => navigate('meals'));
 
   // Log Meal Button
   document.querySelector('#log-meal-btn')?.addEventListener('click', () => {
     if (state.currentMeal) showLogMealModal(state.currentMeal);
   });
 
-  // Product Scanner: Categories buttons
+  // Product Scanner: Category Buttons
   document.querySelectorAll('#product-categories .product-category-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      handleProductCategoryClick(btn.dataset.category);
-    });
+    btn.addEventListener('click', () => handleProductCategoryClick(btn.dataset.category));
   });
 
-  // Product Scanner: Search by name
+  // Product Scanner: Search by Name
   const prodInput = document.querySelector('#product-search-input');
   let prodTimer = null;
   const triggerProdSearch = () => {
     clearTimeout(prodTimer);
-    searchProducts(prodInput?.value.trim());
+    searchProducts(prodInput?.value);
   };
 
-  prodInput?.addEventListener('submit', e => {
+  prodInput?.addEventListener('input', () => {
     clearTimeout(prodTimer);
-    const val = e.target.value.trim();
-    if (!val) {
-      resetProductScanner();
-      return;
-    }
-    prodTimer = setTimeout(() => searchProducts(val), 400);
+    prodTimer = setTimeout(triggerProdSearch, 400);
   });
-  prodInput?.addEventListener('keydown', e => { if (e.key === 'Enter') { triggerProdSearch(); } });
+  prodInput?.addEventListener('keydown', e => { if (e.key === 'Enter') triggerProdSearch(); });
   document.querySelector('#search-product-btn')?.addEventListener('click', triggerProdSearch);
 
-  // Product Scanner: Barcode lookup
+  // Product Scanner: Barcode Lookup
   const barInput = document.querySelector('#barcode-input');
   let barTimer = null;
   const triggerBarSearch = () => {
     clearTimeout(barTimer);
-    lookupBarcode(barInput?.value.trim());
+    lookupBarcode(barInput?.value);
   };
 
   barInput?.addEventListener('input', e => {
@@ -1055,10 +1021,10 @@ function initEvents() {
       barTimer = setTimeout(() => lookupBarcode(code), 500);
     }
   });
-  barInput?.addEventListener('keydown', e => { if (e.key === 'Enter') { triggerBarSearch(); } });
+  barInput?.addEventListener('keydown', e => { if (e.key === 'Enter') triggerBarSearch(); });
   document.querySelector('#lookup-barcode-btn')?.addEventListener('click', triggerBarSearch);
 
-  // Nutri-Score Filter (Regex)
+  // Nutri-Score Filter
   document.querySelectorAll('.nutri-score-filter').forEach(btn => {
     btn.addEventListener('click', () => {
       state.activeNutriGrade = (btn.dataset.grade || '').toLowerCase();
@@ -1086,7 +1052,7 @@ function initEvents() {
     }
   });
 
-  // Food Log: Clear All
+  // Food Log: Clear Today
   document.querySelector('#clear-foodlog')?.addEventListener('click', () => {
     if (typeof Swal !== 'undefined') {
       Swal.fire({
@@ -1100,44 +1066,21 @@ function initEvents() {
         cancelButtonText: 'Cancel'
       }).then(res => {
         if (res.isConfirmed) {
-          clearLogs();
+          clearTodayLogs();
           renderFoodLogPage();
-          Swal.fire({
-            title: 'Cleared!',
-            text: 'Your food log has been cleared.',
-            icon: 'success',
-            timer: 1500,
-            showConfirmButton: false
-          });
         }
       });
     } else {
-      const modal = document.createElement('div');
-      modal.className = 'fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center z-[9999] p-4';
-      modal.innerHTML = `
-        <div class="bg-white rounded-3xl p-8 max-w-sm w-full text-center shadow-2xl">
-          <div class="w-16 h-16 mx-auto mb-4 rounded-full border-4 border-amber-500/30 flex items-center justify-center text-amber-500 text-3xl font-bold">!</div>
-          <h3 class="text-2xl font-bold text-gray-900 mb-2">Clear Today's Log?</h3>
-          <p class="text-gray-600 text-sm mb-6">This will remove all logged food items for today.</p>
-          <div class="flex gap-3">
-            <button id="swal-fb-confirm" class="flex-1 py-3 bg-red-500 text-white rounded-xl font-semibold hover:bg-red-600 cursor-pointer">Yes, clear it!</button>
-            <button id="swal-fb-cancel" class="flex-1 py-3 bg-gray-500 text-white rounded-xl font-semibold hover:bg-gray-600 cursor-pointer">Cancel</button>
-          </div>
-        </div>
-      `;
-      document.body.appendChild(modal);
-      modal.querySelector('#swal-fb-cancel').onclick = () => modal.remove();
-      modal.querySelector('#swal-fb-confirm').onclick = () => {
-        modal.remove();
-        clearLogs();
+      if (confirm("Clear today's logged items?")) {
+        clearTodayLogs();
         renderFoodLogPage();
-      };
+      }
     }
   });
 
   window.addEventListener('hashchange', handleRoute);
 
-  // <--Automatic rollover: when a day ends at midnight, automatically reset Today's Logged Items view-->
+  // Auto-rollover at midnight
   let lastCheckedDate = getTodayDateStr();
   setInterval(() => {
     const current = getTodayDateStr();
@@ -1146,37 +1089,16 @@ function initEvents() {
       renderFoodLogPage();
     }
   }, 30000);
-
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) {
-      const current = getTodayDateStr();
-      if (current !== lastCheckedDate) {
-        lastCheckedDate = current;
-        renderFoodLogPage();
-      }
-    }
-  });
 }
 
-// Loading Overlay
-function hideLoadingOverlay() {
-  const overlay = document.querySelector('#app-loading-overlay');
-  if (overlay) {
-    overlay.style.transition = 'opacity 0.5s ease-out';
-    overlay.style.opacity = '0';
-    setTimeout(() => {
-      overlay.remove();
-    }, 500);
-  }
-}
 
-// App Initialization
+// INITIALIZE APP
+
 async function initApp() {
   initEvents();
   resetProductScanner();
 
   try {
-    // Load initial data
     const [catData, areaData, mealData] = await Promise.all([
       fetchJSON(`${API_BASE}/meals/categories`),
       fetchJSON(`${API_BASE}/meals/areas`),
