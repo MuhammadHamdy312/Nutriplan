@@ -1013,7 +1013,7 @@ function initEvents() {
     lookupBarcode(barInput?.value);
   };
 
-  barInput?.addEventListener('input', e => {
+  barInput?.addEventListener('submit', e => {
     clearTimeout(barTimer);
     const code = e.target.value.trim();
     if (/^\d{8,14}$/.test(code)) {
